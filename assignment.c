@@ -82,7 +82,7 @@ int main(int argc, char ** argv) {
 		exit(1);
 	}
 	for (int i = 0; i < num_barbers; i++) {
-		barber_done[i] = 1;
+		barber_done[i] = 0;
 	}
 
 	//initialise the customer condition variables.
@@ -193,8 +193,8 @@ int main(int argc, char ** argv) {
 	//create customers according to the arrival rate
     for (k = 1; k <= no_of_customers; k++) {
 		sleep(rand() % (maximum_customer_rate + 1 - minimum_customer_rate) + minimum_customer_rate);
-		customer_ids[k] = k;
-		rc = pthread_create(&customer_threads[k - 1], NULL, customer_routine, (void *) &customer_ids[k]);
+		customer_ids[k - 1] = k;
+		rc = pthread_create(&customer_threads[k - 1], NULL, customer_routine, (void *) &customer_ids[k - 1]);
 		if (rc) {
 			printf("ERROR; return code from pthread_create() (customer %d) is %d\n", k, rc);
 			exit(-1);
@@ -203,7 +203,7 @@ int main(int argc, char ** argv) {
     
 	//join customer threads.
     for (k = 1; k <= no_of_customers; k++) {
-        pthread_join(customer_threads[k], NULL);
+        pthread_join(customer_threads[k - 1], NULL);
     }
 
     printf("Main thread: All customers have now been served. Salon is closed now.\n");
@@ -247,21 +247,25 @@ int main(int argc, char ** argv) {
 void * assistant_routine(void * arg) {
 
 	while (1) {
-		//check if there are any customers left to service
-		pthread_mutex_lock(&serviced_mutex);
-		if (customers_serviced == no_of_customers) {
-			pthread_mutex_unlock(&serviced_mutex);
-			break;	
-		}
-		pthread_mutex_unlock(&serviced_mutex);
-
 		//wait for customers
 		pthread_mutex_lock(&seats_mutex);
 		while (no_of_free_seats == no_of_seats) {
 			printf("Assistant: I'm waiting for customers.\n");
 			pthread_cond_wait(&customer_signal_assistant, &seats_mutex);
+			//check if there are any customers left to service
+			pthread_mutex_lock(&serviced_mutex);
+			if (customers_serviced == no_of_customers) {
+				finished_flag = 1;
+				pthread_mutex_unlock(&serviced_mutex);
+				break;	
+			}
+			pthread_mutex_unlock(&serviced_mutex);
 		}
 		pthread_mutex_unlock(&seats_mutex);
+
+		if (finished_flag) {
+			break;
+		}
 
 		//wait for a barber to become available
 		int barber_index;
@@ -490,6 +494,10 @@ void * customer_routine(void * arg) {
 	//make sure to increment serviced customer counter
 	pthread_mutex_lock(&serviced_mutex);
 	customers_serviced++;
+	//final check for if this is the last customer, lets the assistant start the shut down process
+	if (customers_serviced == no_of_customers) {
+		pthread_cond_signal(&customer_signal_assistant);
+	}
 	pthread_mutex_unlock(&serviced_mutex);
 
     pthread_exit(NULL);
