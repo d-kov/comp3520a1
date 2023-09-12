@@ -246,6 +246,8 @@ int main(int argc, char ** argv) {
 
 void * assistant_routine(void * arg) {
 
+	int customer_index_start = 0; //this variable is to ensure first-come-first-serve order
+
 	while (1) {
 		//wait for customers
 		pthread_mutex_lock(&seats_mutex);
@@ -273,7 +275,7 @@ void * assistant_routine(void * arg) {
 		while (1) {
 			int break_flag = 0;
 			for (int i = 0; i < num_barbers; i++) {
-				if (barber_chairs_tickets[i] == 0) {
+				if (barber_chairs_ids[i] == 0) {
 					//found a free barber, assign customer to this barber
 					barber_index = i + 1;
 					break_flag = 1;
@@ -294,24 +296,31 @@ void * assistant_routine(void * arg) {
 		int repeat_customer = 0;
 		pthread_mutex_lock(&ticket_mutex);
 		pthread_mutex_lock(&barber_chair_mutex);
-		for (int i = 0; i < no_of_seats; i++) {
-			for (int j = 0; j < num_barbers; j++) {
-				if (tickets[i] == barber_chairs_ids[j]) {
-					//if in this section, you are looking at a customer who is already being served. continue to next customer
-					repeat_customer = 1;
-					break;
+		while (customer_ticket == 0) {
+			for (int i = 0; i < no_of_seats; i++) {
+				for (int j = 0; j < num_barbers; j++) {
+					if (tickets[(i + customer_index_start) % no_of_seats] == barber_chairs_ids[j]) {
+						//if in this section, you are looking at a customer who is already being served. continue to next customer
+						repeat_customer = 1;
+						break;
+					}
 				}
+				//if this is a customer already being served, continue to next customer
+				if (repeat_customer) {
+					repeat_customer = 0;
+					continue;
+				}
+				//if you get to this point, you have found a free customer to assign. break the loop.
+				customer_ticket = ((i + customer_index_start) % no_of_seats) + 1;
+				customer_id = tickets[(i + customer_index_start) % no_of_seats];
+				customer_index_start++;
+				if (customer_index_start == no_of_seats) {
+					customer_index_start = 0;
+				}
+				break;
 			}
-			//if this is a customer already being served, continue to next customer
-			if (repeat_customer) {
-				repeat_customer = 0;
-				continue;
-			}
-			//if you get to this point, you have found a free customer to assign. break the loop.
-			customer_ticket = i + 1;
-			customer_id = tickets[i];
-			break;
 		}
+		
 		pthread_mutex_unlock(&barber_chair_mutex);
 		pthread_mutex_unlock(&ticket_mutex);
 		printf("Assistant: Assign Customer %d to Barber %d.\n", customer_ticket, barber_index);
@@ -487,7 +496,9 @@ void * customer_routine(void * arg) {
 	barber_chairs_ids[barber_id - 1] = 0;
 	pthread_mutex_unlock(&barber_chair_mutex);
 	pthread_mutex_lock(&ticket_mutex);
-	tickets[ticket_num - 1] = 0;
+	if (tickets[ticket_num - 1] == customer_id) {
+		tickets[ticket_num - 1] = 0;
+	}
 	pthread_mutex_unlock(&ticket_mutex);
 	//signal the barber that the chair is empty
 	pthread_cond_signal(&barber_condition_variables[2 * (barber_id - 1) + 1]);
